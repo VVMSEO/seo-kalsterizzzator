@@ -1,0 +1,48 @@
+{
+  "entities": {
+    "Project": {
+      "title": "Project",
+      "description": "A saved SEO clustering project",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The ID of the user who owns this project"
+        },
+        "name": {
+          "type": "string",
+          "description": "The name of the project (usually the uploaded file name)"
+        },
+        "threshold": {
+          "type": "number",
+          "description": "The threshold used for clustering"
+        },
+        "parsedData": {
+          "type": "string",
+          "description": "JSON serialized array of parsed queries and URLs"
+        },
+        "groups": {
+          "type": "string",
+          "description": "JSON serialized array of clustered groups with AI analysis"
+        },
+        "createdAt": {
+          "type": "timestamp",
+          "description": "When the project was created"
+        },
+        "updatedAt": {
+          "type": "timestamp",
+          "description": "When the project was last updated"
+        }
+      },
+      "required": ["userId", "name", "threshold", "parsedData", "groups", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/projects/{projectId}": {
+      "schema": {
+        "$ref": "#/entities/Project"
+      },
+      "description": "User's saved clustering projects"
+    }
+  }
+}

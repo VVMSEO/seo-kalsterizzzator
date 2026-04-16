@@ -1,0 +1,77 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users/{userId}/projects
+    // Document ID: {projectId}
+    // Fields:
+    //   - userId: string (required, immutable) - The ID of the user who owns this project
+    //   - name: string (required, max 200 chars) - The name of the project
+    //   - threshold: number (required, 1-10) - The threshold used for clustering
+    //   - parsedData: string (required, max 1MB) - JSON serialized array of parsed queries and URLs
+    //   - groups: string (required, max 1MB) - JSON serialized array of clustered groups with AI analysis
+    //   - createdAt: timestamp (required, immutable) - When the project was created
+    //   - updatedAt: timestamp (required) - When the project was last updated
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    // Check if the user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Check if user owns the resource (for user-owned documents)
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Validate that the document contains only the allowed fields
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+    
+    // Validate string length
+    function validStringLength(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+        request.resource.data[field].size() >= minLen &&
+        request.resource.data[field].size() <= maxLen;
+    }
+
+    // Domain Validators
+    function isValidProject(userId) {
+      return hasOnlyAllowedFields(['userId', 'name', 'threshold', 'parsedData', 'groups', 'createdAt', 'updatedAt']) &&
+             request.resource.data.userId == userId &&
+             validStringLength('name', 1, 200) &&
+             request.resource.data.threshold is number &&
+             request.resource.data.threshold >= 1 &&
+             request.resource.data.threshold <= 10 &&
+             validStringLength('parsedData', 0, 1000000) &&
+             validStringLength('groups', 0, 1000000) &&
+             request.resource.data.createdAt is timestamp &&
+             request.resource.data.updatedAt is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId}/projects/{projectId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidProject(userId);
+      allow update: if isOwner(userId) && 
+                    isValidProject(userId) && 
+                    request.resource.data.createdAt == resource.data.createdAt &&
+                    request.resource.data.userId == resource.data.userId;
+      allow delete: if isOwner(userId);
+    }
+  }
+}
