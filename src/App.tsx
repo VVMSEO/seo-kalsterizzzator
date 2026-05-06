@@ -511,7 +511,7 @@ ${JSON.stringify(payload, null, 2)}
         const response = await fetch("https://routerai.ru/api/v1/chat/completions", {
           method: "POST",
           headers: {
-            "Authorization": "Bearer sk-qbf6ACgy2tmghGMBdty2uA3lWSHY98w7",
+            "Authorization": "sk-idWLIk8WBHJJiwn-Y2oyMNdW0ckjsfIa",
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
