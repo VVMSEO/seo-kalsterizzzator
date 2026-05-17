@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { UploadCloud, Settings, Play, Brain, ChevronDown, ChevronUp, FileSpreadsheet, AlertCircle, Save, FolderOpen, LogOut, LogIn, Trash2 } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { UploadCloud, Settings, Play, Brain, ChevronDown, ChevronUp, FileSpreadsheet, AlertCircle, Save, FolderOpen, LogOut, LogIn, Trash2, Filter, ExternalLink, CheckSquare, Square, Globe } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 import { cn } from './lib/utils';
@@ -339,6 +339,8 @@ function MainApp() {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [excludedDomains, setExcludedDomains] = useState<Set<string>>(new Set());
+  const [showDomainsFilter, setShowDomainsFilter] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const resultsRef = React.useRef<HTMLDivElement>(null);
 
@@ -463,9 +465,41 @@ function MainApp() {
     if (selectedFile) processFile(selectedFile);
   };
 
+  const domainStats = useMemo(() => {
+    if (parsedData.length === 0) return [];
+    const stats: Record<string, number> = {};
+    parsedData.forEach(item => {
+      item.urls.forEach(url => {
+        let domain = url;
+        if (domain.includes('/')) {
+          domain = domain.split('/')[0];
+        }
+        stats[domain] = (stats[domain] || 0) + 1;
+      });
+    });
+    return Object.entries(stats).sort((a, b) => b[1] - a[1]);
+  }, [parsedData]);
+
+  const toggleDomain = (domain: string) => {
+    const next = new Set(excludedDomains);
+    if (next.has(domain)) next.delete(domain);
+    else next.add(domain);
+    setExcludedDomains(next);
+  };
+
   const handleCluster = () => {
     if (parsedData.length === 0) return;
-    const newGroups = clusterQueries(parsedData, threshold);
+    
+    const filteredData = parsedData.map(item => ({
+      query: item.query,
+      urls: item.urls.filter(url => {
+        let domain = url;
+        if (domain.includes('/')) domain = domain.split('/')[0];
+        return !excludedDomains.has(domain);
+      })
+    }));
+
+    const newGroups = clusterQueries(filteredData, threshold);
     setGroups(newGroups);
     setExpandedGroups(new Set());
     setTimeout(() => {
@@ -800,6 +834,109 @@ ${JSON.stringify(payload, null, 2)}
             </div>
           </div>
         </div>
+
+        {/* Domain Filter */}
+        {parsedData.length > 0 && (
+          <div className="bg-white rounded-2xl shadow-sm border border-neutral-200 overflow-hidden">
+            <div 
+              className="p-5 flex items-center justify-between cursor-pointer hover:bg-neutral-50 transition-colors"
+              onClick={() => setShowDomainsFilter(!showDomainsFilter)}
+            >
+              <div className="flex items-center gap-3">
+                <div className="bg-purple-100 text-purple-600 w-8 h-8 rounded-full flex items-center justify-center">
+                  <Filter className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold">Фильтрация доменов</h3>
+                  <p className="text-sm text-neutral-500">
+                    Исключите неподходящие сайты (маркетплейсы, информационники) для более точной кластеризации
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium bg-neutral-100 px-3 py-1 rounded-full">
+                  {domainStats.length} доменов
+                </span>
+                {showDomainsFilter ? <ChevronUp className="w-5 h-5 text-neutral-400" /> : <ChevronDown className="w-5 h-5 text-neutral-400" />}
+              </div>
+            </div>
+
+            {showDomainsFilter && (
+              <div className="p-5 border-t border-neutral-100 bg-neutral-50/50">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+                  <p className="text-sm text-neutral-600">
+                    Отключите галочки у доменов, которые не должны учитываться при кластеризации.
+                  </p>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => setExcludedDomains(new Set())}
+                      className="text-sm font-medium text-blue-600 hover:text-blue-700 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+                    >
+                      Выбрать все
+                    </button>
+                    <button 
+                      onClick={() => setExcludedDomains(new Set(domainStats.map(d => d[0])))}
+                      className="text-sm font-medium text-neutral-600 hover:text-neutral-700 px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors"
+                    >
+                      Снять выделение
+                    </button>
+                  </div>
+                </div>
+                <div className="max-h-80 overflow-y-auto custom-scrollbar border border-neutral-200 rounded-xl bg-white">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-neutral-50 sticky top-0 border-b border-neutral-200 z-10">
+                      <tr>
+                        <th className="px-4 py-3 font-semibold text-neutral-600 w-12 text-center">Учитывать</th>
+                        <th className="px-4 py-3 font-semibold text-neutral-600">Домен</th>
+                        <th className="px-4 py-3 font-semibold text-neutral-600 w-24 text-center">Встречается</th>
+                        <th className="px-4 py-3 font-semibold text-neutral-600 w-24 text-center">Ссылка</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-100">
+                      {domainStats.map(([domain, count]) => {
+                        const isExcluded = excludedDomains.has(domain);
+                        return (
+                          <tr 
+                            key={domain} 
+                            className={cn("hover:bg-neutral-50 transition-colors cursor-pointer", isExcluded && "bg-neutral-50/50")}
+                            onClick={() => toggleDomain(domain)}
+                          >
+                            <td className="px-4 py-3 text-center">
+                              {isExcluded ? (
+                                <Square className="w-5 h-5 text-neutral-300 inline-block" />
+                              ) : (
+                                <CheckSquare className="w-5 h-5 text-blue-600 inline-block" />
+                              )}
+                            </td>
+                            <td className={cn("px-4 py-3 font-medium break-all", isExcluded ? "text-neutral-400 line-through" : "text-neutral-800")}>
+                              {domain}
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <span className={cn("px-2 py-0.5 rounded-full text-xs font-bold", isExcluded ? "bg-neutral-100 text-neutral-400" : "bg-neutral-100 text-neutral-600")}>
+                                {count}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                              <a 
+                                href={`https://${domain}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center justify-center p-1.5 text-neutral-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                title="Открыть сайт"
+                              >
+                                <ExternalLink className="w-5 h-5" />
+                              </a>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Error Message */}
         {error && (
