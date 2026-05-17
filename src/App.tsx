@@ -344,6 +344,8 @@ function MainApp() {
   const [isDragging, setIsDragging] = useState(false);
   const resultsRef = React.useRef<HTMLDivElement>(null);
 
+  const [isRefining, setIsRefining] = useState(false);
+
   // Connection Test
   useEffect(() => {
     async function testConnection() {
@@ -600,6 +602,107 @@ ${JSON.stringify(payload, null, 2)}
     }
   };
 
+  const handleAIRefine = async () => {
+    if (groups.length === 0) return;
+    setIsAnalyzing(true);
+    setIsRefining(true);
+    setError(null);
+    setAnalyzeProgress(null);
+
+    try {
+      // Chunk payload into chunks of max 150 groups to avoid token limit if very large
+      // But typically we should just send all of them if they fit.
+      const payload = groups.map(g => ({
+        id: g.id,
+        queries: g.queries
+      }));
+
+      // if payload is crazy large (e.g. > 200 groups), we might need to warn, but let's try raw
+      const prompt = `Ты опытный SEO-специалист. Я передаю тебе черновую кластеризацию поисковых запросов, сделанную алгоритмом на основе выдачи (ТОП-10). 
+Твоя задача — "дошлифовать" эту кластеризацию. Часто запросы, которые логично продвигать на одной посадочной странице, попадают в разные группы из-за случайных отличий в выдаче.
+Внимательно проанализируй все группы и их запросы. Объедини группы, если у них одинаковый пользовательский интент и они должны вести на одну и ту же страницу. Перенеси отдельные запросы из группы в группу, если они оказались не там.
+
+Для каждой итоговой группы определи интент и дай рекомендацию по типу страницы.
+
+Внимание: 
+1. Не теряй запросы. Все переданные запросы должны оказаться в итоговых группах (в исходном виде без изменений). КРИТИЧЕСКИ ВАЖНО: Выведи ПОЛНЫЕ массивы queries для каждой группы. ЗАПРЕЩЕНО использовать сокращения или многоточия (...). Выведи каждый запрос полностью.
+2. Выдай ответ СТРОГО в формате валидного JSON-массива. Никакого текста до или после JSON.
+
+Формат результата (массив объектов):
+[
+  {
+    "id": "Идентификатор группы (можно использовать новые, например AI_G1)",
+    "queries": ["запрос 1", "запрос 2", ...],
+    "intent": "Коммерческий/Информационный/Транзакционный/Навигационный",
+    "recommendation": "Краткая рекомендация по странице (1-2 предложения)"
+  }
+]
+
+Исходные группы:
+${JSON.stringify(payload, null, 2)}
+      `;
+
+      const response = await fetch("https://routerai.ru/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": "sk-idWLIk8WBHJJiwn-Y2oyMNdW0ckjsfIa",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "anthropic/claude-sonnet-4.6",
+          messages: [
+            { role: "user", content: prompt }
+          ]
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Ошибка API: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      let text = data.choices?.[0]?.message?.content || "";
+      
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (jsonMatch) text = jsonMatch[0];
+
+      if (text) {
+        const aiResults = JSON.parse(text);
+        if (Array.isArray(aiResults)) {
+          const newGroups: Group[] = aiResults.map((res: any, idx: number) => {
+            // Find shared urls from original groups or leave empty if mixed
+            let sharedUrls: string[] = [];
+            // Try to rescue sharedUrls from the first group that has these queries
+            if (res.queries && res.queries.length > 0) {
+              const originalGroup = groups.find(g => g.queries.includes(res.queries[0]));
+              if (originalGroup) sharedUrls = originalGroup.sharedUrls;
+            }
+            return {
+              id: res.id || `AI_G${idx + 1}`,
+              queries: res.queries || [],
+              sharedUrls,
+              intent: res.intent || '',
+              recommendation: res.recommendation || ''
+            };
+          });
+          setGroups(newGroups);
+          setExpandedGroups(new Set());
+        } else {
+          throw new Error("Нейросеть вернула не массив данных");
+        }
+      } else {
+        throw new Error("Пустой ответ от нейросети");
+      }
+
+    } catch (err: any) {
+      console.error(err);
+      setError("Ошибка при AI-перегруппировке: " + (err.message || "Неизвестная ошибка"));
+    } finally {
+      setIsAnalyzing(false);
+      setIsRefining(false);
+    }
+  };
+
   const handleSaveProject = async () => {
     if (!user) return;
     if (parsedData.length === 0 && groups.length === 0) {
@@ -807,18 +910,29 @@ ${JSON.stringify(payload, null, 2)}
                 className="w-full flex items-center justify-center gap-2 bg-neutral-900 hover:bg-neutral-800 text-white py-3 px-4 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Play className="w-4 h-4" />
-                Сгруппировать запросы
+                1. Сгруппировать по ТОП-10
               </button>
               
               <button 
-                onClick={handleAIAnalysis}
+                onClick={handleAIRefine}
                 disabled={groups.length === 0 || isAnalyzing}
                 className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Brain className="w-4 h-4" />
-                {isAnalyzing 
+                {isAnalyzing && isRefining 
+                  ? "Обдумывание структуры..." 
+                  : "2. AI-Перегруппировка (Рекомендуется)"}
+              </button>
+
+              <button 
+                onClick={handleAIAnalysis}
+                disabled={groups.length === 0 || isAnalyzing}
+                className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white py-3 px-4 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Brain className="w-4 h-4" />
+                {isAnalyzing && !isRefining
                   ? (analyzeProgress ? `Анализ... (${analyzeProgress.current} из ${analyzeProgress.total})` : "Нейросеть анализирует...") 
-                  : "Анализ интента (AI)"}
+                  : "Только анализ интента (без переносов)"}
               </button>
 
               {user && (
